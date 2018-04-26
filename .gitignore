@@ -1,2 +1,4 @@
 .pioenvs/
 .sconsign.dblite
+.piolibdeps/
+.vscode/
