@@ -34,24 +34,22 @@ SimpleTimer timer;
 int timerId;
 
 void timerCallback() {
-  digitalWrite(ONBOARD_LED, LOW);
-  
   // Turn off all columns and pull all rows high
   byte i;
   for (i = 0; i < NUMBER_OF_COLUMNS; i++)
   {
-    pinMode (colPins [i], OUTPUT);
-    digitalWrite (colPins [i], LOW);
+    pinMode (colPins[i], OUTPUT);
+    digitalWrite (colPins[i], LOW);
   } 
   for (i = 0; i < NUMBER_OF_ROWS; i++)
   {
-    pinMode (rowPins [i], INPUT_PULLUP);
+    pinMode (rowPins[i], INPUT_PULLUP);
   }
 
   // Check to make sure no pins are currently being pressed
   for (i = 0; i < NUMBER_OF_ROWS; i++)
   {
-    if (digitalRead (rowPins [i]) == LOW)
+    if (digitalRead (rowPins[i]) == LOW)
     {
       Serial.println("button pressed");
       return; 
@@ -60,12 +58,10 @@ void timerCallback() {
   // Sleep quickly to account for any button debouncing
   delay (50);
 
+  digitalWrite(ONBOARD_LED, LOW);
+
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
-  esp_err_t enableWakeupError = esp_deep_sleep_enable_ext1_wakeup(BIT(GPIO_NUM_27) | BIT(GPIO_NUM_14) | BIT(GPIO_NUM_12)| BIT(GPIO_NUM_13), ESP_EXT1_WAKEUP_ANY_HIGH);
-  if (enableWakeupError != ESP_OK) 
-  {
-    Serial.println("enableWakeupError");
-  }
+  esp_deep_sleep_enable_ext1_wakeup(BIT(GPIO_NUM_27) | BIT(GPIO_NUM_14) | BIT(GPIO_NUM_12)| BIT(GPIO_NUM_13), ESP_EXT1_WAKEUP_ANY_HIGH);
 
   esp_deep_sleep_start();
 }
@@ -78,19 +74,6 @@ void setup()
   
   pinMode(ONBOARD_LED, OUTPUT);
   digitalWrite(ONBOARD_LED, HIGH);
-
-  esp_deep_sleep_wakeup_cause_t wakeupCause = esp_deep_sleep_get_wakeup_cause();
-   Serial.print("wakeupCause: ");
-  switch (wakeupCause) {
-    case ESP_DEEP_SLEEP_WAKEUP_EXT1:
-      Serial.println("ESP_DEEP_SLEEP_WAKEUP_EXT1");
-      break;
-    case  ESP_DEEP_SLEEP_WAKEUP_UNDEFINED:
-      Serial.println("ESP_DEEP_SLEEP_WAKEUP_UNDEFINED");
-      break;
-    default:
-      Serial.println("unknown");
-  }
 
   ledcAttachPin(LED_RED, CHANNEL_RED);
   ledcAttachPin(LED_GREEN, CHANNEL_GREEN);
@@ -106,8 +89,8 @@ void clearEnteredValues()
   ledcWrite(CHANNEL_RED, 0);
   ledcWrite(CHANNEL_GREEN, 0);
   while(enteredValuesCount !=0)
-  {   // This can be used for any array size, 
-    enteredValues[enteredValuesCount--] = 0; //clear array for new data
+  {
+    enteredValues[enteredValuesCount--] = 0;
   }
   return;
 }
