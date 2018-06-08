@@ -1,7 +1,12 @@
 #include <Arduino.h>
 #include "esp_deep_sleep.h"
+#include "EEPROM.h"
 #include <Keypad.h>
 #include <SimpleTimer.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
 
 const byte NUMBER_OF_ROWS = 4;
 const byte NUMBER_OF_COLUMNS = 4; 
@@ -17,7 +22,7 @@ byte colPins[NUMBER_OF_COLUMNS] = {GPIO_NUM_27, GPIO_NUM_14, GPIO_NUM_12, GPIO_N
 
 const byte PASSWORD_LENGTH = 5;
 char enteredValues[PASSWORD_LENGTH]; 
-char password[PASSWORD_LENGTH] = "1234"; 
+char password[PASSWORD_LENGTH]; 
 byte enteredValuesCount = 0;
 
 const int ONBOARD_LED = GPIO_NUM_2;
@@ -32,6 +37,44 @@ const int MAX_BRIGHTNESS = 255;
 Keypad customKeypad = Keypad(makeKeymap(hexaKeys), rowPins, colPins, NUMBER_OF_ROWS, NUMBER_OF_COLUMNS);
 SimpleTimer timer;
 int timerId;
+
+BLECharacteristic *pCharacteristic;
+bool deviceConnected = false;
+float txValue = 0;
+
+#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
+#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+      ledcWrite(CHANNEL_BLUE, MAX_BRIGHTNESS);
+      timer.disable(timerId);
+    };
+
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
+      ledcWrite(CHANNEL_BLUE, 0);
+      timer.enable(timerId);
+    }
+};
+
+class MyCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      std::string rxValue = pCharacteristic->getValue();
+
+      if (rxValue.length() > 0 && rxValue.length() == 4) {
+        Serial.println("*********");
+        Serial.print("New Password: ");
+
+        strcpy(password, rxValue.c_str());
+        Serial.println(password);      
+        EEPROM.put(0, password);
+        EEPROM.commit();
+      }
+    }
+};
 
 void timerCallback() {
   // Turn off all columns and pull all rows high
@@ -66,11 +109,14 @@ void timerCallback() {
   esp_deep_sleep_start();
 }
 
+int addr = 0;
+#define EEPROM_SIZE 64
+
 void setup()
 {
   Serial.begin(115200);
 
-  timerId = timer.setInterval(5000, timerCallback);
+  timerId = timer.setInterval(20000, timerCallback);
   
   pinMode(ONBOARD_LED, OUTPUT);
   digitalWrite(ONBOARD_LED, HIGH);
@@ -82,16 +128,70 @@ void setup()
   ledcSetup(CHANNEL_RED, 12000, 8); // 12 kHz PWM, 8-bit resolution
   ledcSetup(CHANNEL_GREEN, 12000, 8);
   ledcSetup(CHANNEL_BLUE, 12000, 8);
+
+  BLEDevice::init("Keypad Security"); // Give it a name
+
+  // Create the BLE Server
+  BLEServer *pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  // Create the BLE Service
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // Create a BLE Characteristic
+  pCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID_TX,
+                      BLECharacteristic::PROPERTY_NOTIFY
+                    );
+                      
+  pCharacteristic->addDescriptor(new BLE2902());
+
+  BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID_RX,
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+
+  pCharacteristic->setCallbacks(new MyCallbacks());
+
+  // Start the service
+  pService->start();
+
+  // Start advertising
+  pServer->getAdvertising()->start();
+
+  if (!EEPROM.begin(EEPROM_SIZE))
+  {
+    Serial.println("Failed to initialise EEPROM");
+    ESP.restart();
+  }
+  
+  //--if eeprom is empty add a default password
+  if(byte(EEPROM.read(0)) == byte(255))
+  {
+    Serial.println("Storing default Password 1234 into eeprom");
+    EEPROM.put(0, "1234");
+    EEPROM.commit();
+  }
+
+  EEPROM.get(0, password);
+  Serial.print("Current Password: ");
+  Serial.println(password);
 }
 
 void clearEnteredValues()
 {
   ledcWrite(CHANNEL_RED, 0);
   ledcWrite(CHANNEL_GREEN, 0);
-  while(enteredValuesCount !=0)
+  while(enteredValuesCount != 0)
   {
-    enteredValues[enteredValuesCount--] = 0;
+    enteredValuesCount--;
+    enteredValues[enteredValuesCount] = 0;
   }
+  if (deviceConnected) {
+      Serial.println(enteredValues);
+      pCharacteristic->setValue(enteredValues);
+      pCharacteristic->notify();
+    }
   return;
 }
 
@@ -106,6 +206,10 @@ void loop()
     enteredValues[enteredValuesCount] = customKey;
     enteredValuesCount++;
     Serial.println(customKey);
+    if (deviceConnected) {
+      pCharacteristic->setValue(enteredValues);
+      pCharacteristic->notify();
+    }
   }
   if(enteredValuesCount == PASSWORD_LENGTH - 1)
   {
